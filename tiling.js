@@ -347,6 +347,9 @@ export class Space extends Array {
         saveState.prevSpaces.delete(workspace);
         this._populated = true;
 
+        // zenmod setup
+        this.zenMode = new ZenMode(this);
+
         // init window position bar and space topbar elements
         this.windowPositionBarBackdrop.height = Topbar.panelBox.height;
         this.setSpaceTopbarElementsVisible();
@@ -3151,14 +3154,7 @@ export function registerWindow(metaWindow) {
     signals.connect(actor, 'destroy', destroyHandler);
     signals.connect(clone, 'notify::x', () => {
         const space = spaces.spaceOfWindow(metaWindow);
-        console.log(`x changed on clone actor: ${metaWindow.title}`);
-        if (
-            space?.focusMode === FocusModes.ZEN &&
-            !space.isPlaceable(metaWindow)
-        ) {
-            metaWindow.clone.cloneActor.hide();
-            metaWindow.clone.cloneActor.source = null;
-        }
+        space.zenMode.clonePositionXChange(metaWindow);
     });
 
     return true;
@@ -3884,11 +3880,8 @@ export function updateSelection(space, metaWindow) {
         }
     }
 
-
     // if zen mode, hide other windows when navigator destroy
-    if (space.focusMode === FocusModes.ZEN) {
-        hideWindowActors(space, space.selectedWindow);
-    }
+    space.zenMode.hideWindowActors(space.selectedWindow);
 }
 
 /**
@@ -4057,14 +4050,7 @@ export function getDefaultFocusMode() {
 // `MetaWindow::focus` handling
 export function focus_handler(metaWindow) {
     const space = spaces.spaceOfWindow(metaWindow);
-    const callback = () => {
-        // if zen mode then hide other windows
-        if (space.focusMode === FocusModes.ZEN) {
-            Utils.later_add(Meta.LaterType.IDLE, () => {
-                hideWindowActors(space, metaWindow);
-            });
-        }
-    };
+    const callback = () => space.zenMode.enableZenMode(metaWindow, true);
 
     console.debug("focus:", metaWindow?.title);
     if (Scratch.isScratchWindow(metaWindow)) {
@@ -4213,22 +4199,20 @@ export function showHandler(actor) {
  * @param {MetaWindow} metaWindow
  * @returns
  */
-export function showWindowActor(metaWindow, hideClone = true) {
+export function showWindowActor(metaWindow) {
     const actor = metaWindow.get_compositor_private();
     if (!actor) {
         return false;
     }
 
-    if (hideClone && metaWindow.clone?.cloneActor) {
-        metaWindow.clone.cloneActor.hide();
-        metaWindow.clone.cloneActor.source = null;
+    const cloneActor = metaWindow.clone?.cloneActor;
+    if (cloneActor) {
+        cloneActor.hide();
+        cloneActor.source = null;
     }
 
     const space = spaces.spaceOfWindow(metaWindow);
-    if (
-        space?.focusMode === FocusModes.ZEN &&
-        space.selectedWindow !== metaWindow
-    ) {
+    if (!space.zenMode.showWindowActor(metaWindow)) {
         return true;
     }
 
@@ -4237,12 +4221,12 @@ export function showWindowActor(metaWindow, hideClone = true) {
 }
 
 /**
- * Shows the window clone.  Optionally dides the window actor.  Used for animation purposes
+ * Shows the window clone.  Optionally hides the window actor.  Used for animation purposes
  * (we animate using clones and then hide clones and show repositioned window actors).
  * @param {MetaWindow} metaWindow
  * @returns
  */
-export function showWindowClone(metaWindow, hideActor = true) {
+export function showWindowClone(metaWindow) {
     const actor = metaWindow.get_compositor_private();
     if (!actor) {
         return false;
@@ -4254,49 +4238,137 @@ export function showWindowClone(metaWindow, hideActor = true) {
         cloneActor.source = actor;
     }
 
-    if (hideActor) {
-        actor.hide();
-    }
+    actor.hide();
     return true;
-}
-
-/**
- * Shows all window actors for a space, except those defined.
- * @param {Space} space
- * @param  {...MetaWindow} except
- */
-export function showWindowActors(space, ...except) {
-    if (!space) {
-        return;
-    }
-
-    // we need to hide actors for all non-focused windows
-    space.getWindows()
-        .filter(w => !except.includes(w))
-        .forEach(w => showWindowActor(w));
-}
-
-/**
- * Hides all window actors for a space, except those defined.
- * @param {Space} space
- * @param  {...MetaWindow} except
- */
-export function hideWindowActors(space, ...except) {
-    if (!space) {
-        return;
-    }
-
-    // we need to hide actors for all non-focused windows
-    space.getWindows()
-        .filter(w => !except.includes(w))
-        .forEach(w => {
-            w.get_compositor_private()?.hide();
-        });
 }
 
 export function isWindowAnimating(metaWindow) {
     let clone = metaWindow.clone;
     return clone.get_parent() && clone.cloneActor.visible;
+}
+
+/**
+ * ZenMode related logic and functions.
+ */
+class ZenMode {
+    constructor(space) {
+        this.space = space;
+    }
+
+    get isZenMode() {
+        return this.space.focusMode === FocusModes.ZEN;
+    }
+
+    enableZenMode(metaWindow, later = false) {
+        // if zen mode then hide other windows
+        if (this.isZenMode) {
+            if (later) {
+                Utils.later_add(Meta.LaterType.IDLE, () => {
+                    this.hideWindowActors(metaWindow);
+                });
+            }
+            else {
+                this.hideWindowActors(metaWindow);
+            }
+        }
+    }
+
+    disableZenMode() {
+        this.showWindowActors();
+    }
+
+    /**
+     * Returns true iff metaWindow actor should be shown.
+     * @param {MetaWindow} metaWindow
+     * @returns Boolean
+     */
+    showWindowActor(metaWindow) {
+        if (
+            this.isZenMode &&
+            this.space.selectedWindow !== metaWindow
+        ) {
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
+     * Function for ZenMode that should be called whenever window clones
+     * change x position.
+     * @param {MetaWindow} metaWindow
+     * @returns
+     */
+    clonePositionXChange(metaWindow) {
+        if (
+            this.isZenMode &&
+            !this.space.isPlaceable(metaWindow)
+        ) {
+            metaWindow.clone.cloneActor.hide();
+            metaWindow.clone.cloneActor.source = null;
+        }
+    }
+
+    /**
+     * Hides all window actors for a space, except those defined.
+     */
+    hideWindowActors(...exclude) {
+        // we need to hide actors for all non-focused windows
+        if (this.isZenMode) {
+            this.space.getWindows()
+            .filter(w => !exclude.includes(w))
+            .forEach(w => {
+                w.get_compositor_private()?.hide();
+
+                // hide non-placeable clones
+                if (
+                    !this.space.isPlaceable(w)
+                ) {
+                    w.clone.cloneActor.hide();
+                    w.clone.cloneActor.source = null;
+                }
+            });
+        }
+    }
+
+    /**
+     * Shows all window actors for a space, except those defined.
+     * @param {Space} space
+     * @param  {...MetaWindow} except
+     */
+    showWindowActors(...except) {
+        // we need to hide actors for all non-focused windows
+        if (this.isZenMode) {
+            this.space.getWindows()
+                .filter(w => !except.includes(w))
+                .forEach(w => showWindowActor(w));
+        }
+    }
+
+    /**
+     * ZenMode minimap show function.
+     */
+    minimapShow() {
+        // if zen mode, hide other windows when navigator destroy
+        if (this.isZenMode) {
+            this.space.getWindows().forEach(w => {
+                if (
+                    !this.space.isPlaceable(w)
+                ) {
+                    w.clone.cloneActor.show();
+                    w.clone.cloneActor.source = w.get_compositor_private();
+                }
+            });
+        }
+    }
+
+    /**
+     * ZenMode minimap destroy function.
+     */
+    minimapDestroy() {
+        // if zen mode, hide other windows when navigator destroy
+        this.hideWindowActors(this.space.selectedWindow);
+    }
 }
 
 export function toggleMaximizeHorizontally(metaWindow) {
@@ -4606,7 +4678,7 @@ export function setFocusMode(mode, space) {
 
     switch (mode) {
     case FocusModes.DEFAULT:
-        showWindowActors(space);
+        space.zenMode.disableZenMode();
         if (space.unfocusXPosition !== null) {
             // if window is first, move to left edge
             let position;
@@ -4627,7 +4699,7 @@ export function setFocusMode(mode, space) {
         }
         break;
     case FocusModes.CENTER:
-        showWindowActors(space);
+        space.zenMode.disableZenMode();
         if (selectedWin) {
             // check it closer to min or max of workArea
             const frame = selectedWin.get_frame_rect();
@@ -4642,7 +4714,7 @@ export function setFocusMode(mode, space) {
         }
         break;
     case FocusModes.ZEN:
-        hideWindowActors(space, space.selectedWindow);
+        space.zenMode.enableZenMode(space.selectedWindow);
     }
 }
 
