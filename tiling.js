@@ -4652,6 +4652,53 @@ export function slurp(metaWindow) {
     });
 }
 
+/*
+* push the current window to the column to the left. if there is no
+* column to the left, pull the top window from the stack to the right.
+* into the current stack. roughly opposite behaviour of slurp.
+*/
+export function slurpTo(metaWindow) {
+    let space = spaces.spaceOfWindow(metaWindow);
+    let index = space.indexOf(metaWindow);
+
+    let to, from;
+    let metaWindowToSlurp;
+
+    if (index === 0 || space.length > 1) {
+        to = index;
+        from = index + 1;
+        metaWindowToSlurp = space[from][0];
+    } else {
+        metaWindowToSlurp = metaWindow;
+        to = index - 1;
+        from = index;
+    }
+
+    // slurping fullscreen windows is trouble
+    if (!metaWindowToSlurp || space.length < 2) {
+        return;
+    }
+
+    // slurping fullscreen windows is trouble, unfullscreen when slurping
+    if (metaWindowToSlurp?.fullscreen) {
+        metaWindowToSlurp.unmake_fullscreen();
+    }
+
+    space[to].push(metaWindowToSlurp);
+
+    { // Remove the slurped window
+        let column = space[from];
+        let row = column.indexOf(metaWindowToSlurp);
+        column.splice(row, 1);
+        if (column.length === 0)
+            space.splice(from, 1);
+    }
+
+    space.layout(true, {
+        customAllocators: { [to]: allocateEqualHeight, ensure: false },
+    });
+}
+
 /**
  * Barfs the bottom window from a column.
  * @param {MetaWindow} metaWindow
