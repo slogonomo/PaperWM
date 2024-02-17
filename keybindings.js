@@ -250,6 +250,10 @@ export function setupActions(settings) {
         Tiling.slurp,
         Meta.KeyBindingFlags.PER_WINDOW);
 
+    registerPaperAction('slurp-to',
+        Tiling.slurpTo,
+        Meta.KeyBindingFlags.PER_WINDOW);
+
     registerPaperAction('barf-out',
         Tiling.barf,
         Meta.KeyBindingFlags.PER_WINDOW);

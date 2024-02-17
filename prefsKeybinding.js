@@ -41,6 +41,7 @@ const actions = {
         'move-up',
         'move-down',
         'slurp-in',
+        'slurp-to',
         'barf-out',
         'center-horizontally',
         'paper-toggle-fullscreen',
