@@ -4652,6 +4652,7 @@ export function slurp(metaWindow) {
     });
 }
 
+// TODO: rename and update description to reflect revised functionality
 /*
 * push the current window to the column to the left. if there is no
 * column to the left, pull the top window from the stack to the right.
@@ -4661,16 +4662,19 @@ export function slurpTo(metaWindow) {
     let space = spaces.spaceOfWindow(metaWindow);
     let index = space.indexOf(metaWindow);
 
-    let to, from;
+    let to, from, fromRow;
     let metaWindowToSlurp;
 
-    if (index === 0 || space.length > 1) {
+    if (index > 0) {
         to = index;
-        from = index + 1;
-        metaWindowToSlurp = space[from][0];
-    } else {
+        from = to - 1;
+        fromRow = space[from].length - 1;
+        metaWindowToSlurp = space[from][fromRow];
+    } else if (index === 0) {
+        if (space[index].length > 1)
+            return;
         metaWindowToSlurp = metaWindow;
-        to = index - 1;
+        to = index + 1;
         from = index;
     }
 
@@ -4684,14 +4688,16 @@ export function slurpTo(metaWindow) {
         metaWindowToSlurp.unmake_fullscreen();
     }
 
-    space[to].push(metaWindowToSlurp);
+    space[to].unshift(metaWindowToSlurp);
 
     { // Remove the slurped window
         let column = space[from];
         let row = column.indexOf(metaWindowToSlurp);
         column.splice(row, 1);
-        if (column.length === 0)
+        if (column.length === 0) {
             space.splice(from, 1);
+            to -= 1; // [to] column index just changed, let the allocator know
+        }
     }
 
     space.layout(true, {
